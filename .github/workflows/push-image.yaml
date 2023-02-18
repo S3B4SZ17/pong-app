@@ -1,0 +1,75 @@
+---
+name: Build and push image to ECR
+
+# required for aws credentials assume
+permissions:
+  id-token: write
+  contents: read
+
+on:
+  push:
+    branches:
+    - main
+    - develop
+    - tools
+    paths:
+    - '**/Dockerfile'
+    tags:
+      - v1.**
+  workflow_dispatch:
+    inputs:
+      # repo_registry:
+      #   type: string
+      #   description: "The name of the registry"
+      #   required: true
+      image_repo:
+        type: string
+        description: "The name of the image"
+        required: true
+      image_tag:
+        type: string
+        description: "Tag name"
+        required: true
+
+jobs:
+  build:
+    name: Build Image
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v3
+
+    - name: Install Cosign
+      uses: sigstore/cosign-installer@main
+      with:
+        cosign-release: 'v2.0.0-rc.0' # optional
+        
+    - name: Configure AWS credentials from Test account
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        role-to-assume: arn:aws:iam::809870132669:role/Push-ECR-cosign
+        aws-region: us-east-1
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+
+    - name: set outputs with default values
+      id: set-image-defaults
+      run: |    
+        # If workflow_dispatch, use inputs (left), if other trigger, use default env (right)
+        # echo "image_registry=${{ github.event.inputs.repo_registry || 'ECR_REG' }}" >> $GITHUB_OUTPUT
+        echo "image_tag=${{ github.event.inputs.image_tag || 'signed-kms' }}" >> $GITHUB_OUTPUT
+        echo "image_repo=${{ github.event.inputs.image_repo || 'pong-app' }}" >> $GITHUB_OUTPUT
+
+    - name: Build, tag, and push image to Amazon ECR
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        ECR_REPOSITORY: ${{ steps.set-image-defaults.outputs.image_repo }}
+        IMAGE_TAG: ${{ steps.set-image-defaults.outputs.image_tag }}
+      run: |
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./src
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        IMAGE_DIGEST=$(docker inspect $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG | jq -r '.[0].RepoDigests[0]' | cut -d'@' -f2)
+        AWS_CMK_ID="awskms:///arn:aws:kms:us-east-1:809870132669:alias/cosign-key"
+        cosign sign --key $AWS_CMK_ID $ECR_REGISTRY/$ECR_REPOSITORY@$IMAGE_DIGEST
