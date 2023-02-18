@@ -1,0 +1,11 @@
+---
+http_server:
+  gin_mode: release
+  http_port: "8181"
+  cors:
+    enabled: true
+    list_hosts:
+      - http://localhost:3000
+
+pong:
+  message: Pong from sebas!
