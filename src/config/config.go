@@ -6,7 +6,7 @@ import (
 
 func LoadConfig() (err error) {
 
-	viper.AddConfigPath("/pong-app/")
+	viper.AddConfigPath("/image_verification_in_k8s/")
 	viper.AddConfigPath(".")
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")

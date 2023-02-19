@@ -2,6 +2,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: pong-app
+  namespace: app1
   labels:
     app: pong-app
 spec:

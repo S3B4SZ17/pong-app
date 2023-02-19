@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pong-app
+  namespace: app2
+spec:
+  selector:
+    matchLabels:
+      app: pong-app
+  template:
+    metadata:
+      labels:
+        app: pong-app
+    spec:
+      serviceAccountName: "app2-sa"
+      containers:
+        - name: pong-app
+          image: 809870132669.dkr.ecr.us-east-1.amazonaws.com/pong-app:signed-kms
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8181
+              protocol: TCP

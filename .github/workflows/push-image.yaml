@@ -5,6 +5,7 @@ name: Build and push image to ECR
 permissions:
   id-token: write
   contents: read
+  packages: write
 
 on:
   push:
@@ -30,6 +31,12 @@ on:
         type: string
         description: "Tag name"
         required: true
+      signed:
+        type: boolean
+        description: "Choose whether to sign the image or not"
+        required: true
+        default: true
+
 
 jobs:
   build:
@@ -61,8 +68,10 @@ jobs:
         # echo "image_registry=${{ github.event.inputs.repo_registry || 'ECR_REG' }}" >> $GITHUB_OUTPUT
         echo "image_tag=${{ github.event.inputs.image_tag || 'signed-kms' }}" >> $GITHUB_OUTPUT
         echo "image_repo=${{ github.event.inputs.image_repo || 'pong-app' }}" >> $GITHUB_OUTPUT
+        echo "sign_image=${{ github.event.inputs.signed || 'true' }}" >> $GITHUB_OUTPUT
 
-    - name: Build, tag, and push image to Amazon ECR
+    - name: Build, tag, signed and push image to Amazon ECR
+      if: steps.set-image-defaults.outputs.sign_image == 'true'
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         ECR_REPOSITORY: ${{ steps.set-image-defaults.outputs.image_repo }}
@@ -73,3 +82,14 @@ jobs:
         IMAGE_DIGEST=$(docker inspect $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG | jq -r '.[0].RepoDigests[0]' | cut -d'@' -f2)
         AWS_CMK_ID="awskms:///arn:aws:kms:us-east-1:809870132669:alias/cosign-key"
         cosign sign --key $AWS_CMK_ID $ECR_REGISTRY/$ECR_REPOSITORY@$IMAGE_DIGEST
+        cosign sign --key $AWS_CMK_ID $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+    - name: Build, tag, and push image to Amazon ECR
+      if: steps.set-image-defaults.outputs.sign_image == 'false'
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        ECR_REPOSITORY: ${{ steps.set-image-defaults.outputs.image_repo }}
+        IMAGE_TAG: ${{ steps.set-image-defaults.outputs.image_tag }}
+      run: |
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./src
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
