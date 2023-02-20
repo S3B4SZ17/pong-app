@@ -15,7 +15,7 @@ spec:
       serviceAccountName: "app2-sa"
       containers:
         - name: pong-app
-          image: 809870132669.dkr.ecr.us-east-1.amazonaws.com/pong-app:signed-kms
+          image: docker.io/s3b4s/pong-app:co-signed
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

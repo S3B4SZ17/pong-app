@@ -36,6 +36,11 @@ on:
         description: "Choose whether to sign the image or not"
         required: true
         default: true
+      to_ECR:
+        type: boolean
+        description: "Choose to push the IMAGE to ECR, default to Docker Hub"
+        required: true
+        default: false
 
 
 jobs:
@@ -51,6 +56,16 @@ jobs:
       with:
         cosign-release: 'v2.0.0-rc.0' # optional
         
+    - name: set outputs with default values
+      id: set-image-defaults
+      run: |    
+        # If workflow_dispatch, use inputs (left), if other trigger, use default env (right)
+        # echo "image_registry=${{ github.event.inputs.repo_registry || 'ECR_REG' }}" >> $GITHUB_OUTPUT
+        echo "image_tag=${{ github.event.inputs.image_tag || 'co-signed' }}" >> $GITHUB_OUTPUT
+        echo "image_repo=${{ github.event.inputs.image_repo || 'pong-app' }}" >> $GITHUB_OUTPUT
+        echo "sign_image=${{ github.event.inputs.signed || 'true' }}" >> $GITHUB_OUTPUT
+        echo "to_ECR=${{ github.event.inputs.to_ECR || 'false' }}" >> $GITHUB_OUTPUT
+    
     - name: Configure AWS credentials from Test account
       uses: aws-actions/configure-aws-credentials@v1
       with:
@@ -58,20 +73,12 @@ jobs:
         aws-region: us-east-1
 
     - name: Login to Amazon ECR
+      if: steps.set-image-defaults.outputs.to_ECR == 'true'
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
 
-    - name: set outputs with default values
-      id: set-image-defaults
-      run: |    
-        # If workflow_dispatch, use inputs (left), if other trigger, use default env (right)
-        # echo "image_registry=${{ github.event.inputs.repo_registry || 'ECR_REG' }}" >> $GITHUB_OUTPUT
-        echo "image_tag=${{ github.event.inputs.image_tag || 'signed-kms' }}" >> $GITHUB_OUTPUT
-        echo "image_repo=${{ github.event.inputs.image_repo || 'pong-app' }}" >> $GITHUB_OUTPUT
-        echo "sign_image=${{ github.event.inputs.signed || 'true' }}" >> $GITHUB_OUTPUT
-
     - name: Build, tag, signed and push image to Amazon ECR
-      if: steps.set-image-defaults.outputs.sign_image == 'true'
+      if: steps.set-image-defaults.outputs.sign_image == 'true' && steps.set-image-defaults.outputs.to_ECR == 'true'
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         ECR_REPOSITORY: ${{ steps.set-image-defaults.outputs.image_repo }}
@@ -85,7 +92,7 @@ jobs:
         cosign sign --key $AWS_CMK_ID $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
     - name: Build, tag, and push image to Amazon ECR
-      if: steps.set-image-defaults.outputs.sign_image == 'false'
+      if: steps.set-image-defaults.outputs.sign_image == 'false' && steps.set-image-defaults.outputs.to_ECR == 'true'
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         ECR_REPOSITORY: ${{ steps.set-image-defaults.outputs.image_repo }}
@@ -93,3 +100,46 @@ jobs:
       run: |
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./src
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@f054a8b539a109f9f41c372932f1ae047eff08c9
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Set up QEMU
+      if: steps.set-image-defaults.outputs.sign_image == 'true' && steps.set-image-defaults.outputs.to_ECR == 'false'
+      uses: docker/setup-qemu-action@v2
+
+    - name: Set up Docker Buildx
+      if: steps.set-image-defaults.outputs.sign_image == 'true' && steps.set-image-defaults.outputs.to_ECR == 'false'
+      uses: docker/setup-buildx-action@v2
+
+    - name: Log in to Docker Hub
+      if: steps.set-image-defaults.outputs.sign_image == 'true' && steps.set-image-defaults.outputs.to_ECR == 'false'
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    # - name: Build and push to Docker Hub
+    #   if: steps.set-image-defaults.outputs.sign_image == 'true' && steps.set-image-defaults.outputs.to_ECR == 'false'
+    #   uses: docker/build-push-action@v4
+    #   with:
+    #     context: ./src
+    #     push: true
+    #     tags: ${{ secrets.DOCKER_USERNAME }}/${{ steps.set-image-defaults.outputs.image_repo }}:${{ steps.set-image-defaults.outputs.image_tag }}
+
+    - name: Build, tag, signed and push image to Docker Hub
+      if: steps.set-image-defaults.outputs.sign_image == 'true' && steps.set-image-defaults.outputs.to_ECR == 'false'
+      env:
+        USER: ${{ secrets.DOCKER_USERNAME }}
+        REPO: ${{ steps.set-image-defaults.outputs.image_repo }}
+        IMAGE_TAG: ${{ steps.set-image-defaults.outputs.image_tag }}
+      run: |
+        docker build -t $USER/$REPO:$IMAGE_TAG ./src
+        docker push $USER/$REPO:$IMAGE_TAG
+        IMAGE_DIGEST=$(docker inspect $USER/$REPO:$IMAGE_TAG | jq -r '.[0].RepoDigests[0]' | cut -d'@' -f2)
+        AWS_CMK_ID="awskms:///arn:aws:kms:us-east-1:809870132669:alias/cosign-key"
+        cosign sign --key $AWS_CMK_ID $USER/$REPO:@$IMAGE_DIGEST
+        cosign sign --key $AWS_CMK_ID $USER/$REPO:$IMAGE_TAG
